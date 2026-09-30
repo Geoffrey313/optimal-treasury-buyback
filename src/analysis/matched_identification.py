@@ -1,4 +1,4 @@
-"""Strengthened identification of the buyback price effect (US-04).
+"""Strengthened identification of the buyback price effect.
 
 The direct estimates in :mod:`src.analysis.event_study` are reported as bounds
 because the Treasury selects which securities to repurchase, and the reaction
@@ -10,9 +10,9 @@ are comparable on the documented selection margins, and it re-tests the
 parallel-trends assumption on the matched sample.
 
 The maturity and coupon cell grid is fixed a priori (standard buckets), not chosen
-to make the pre-trend hold. The decision is honest: if the matched pre-trend test
+to make the pre-trend hold. The rule is fixed in advance: if the matched pre-trend test
 no longer rejects, the design identifies a local effect conditional on the cell;
-if it still rejects, the honest bound stands and is reinforced by the sensitivity
+if it still rejects, the bound stands and is reinforced by the sensitivity
 analysis. Either way the identified effect is conditional on maturity and coupon,
 never unconditional: selection on unobservables (repo specialness, dealer
 inventory) is not removed.
@@ -22,17 +22,14 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from src.engine.absorption import normalize_cusip
+
 # Fixed a-priori cell grid (never tuned to the outcome).
 MATURITY_BINS = [0, 2, 5, 10, 30, 100]
 MATURITY_LABELS = ["0-2", "2-5", "5-10", "10-30", "30+"]
 COUPON_BINS = [-0.01, 2, 4, 6, 100]
 COUPON_LABELS = ["<2", "2-4", "4-6", "6+"]
-BASE_LEN = 8
 BALANCE_VARS = ("ytm", "coupon", "outstanding")
-
-
-def _base(s: pd.Series) -> pd.Series:
-    return s.astype(str).str.strip().str.slice(0, BASE_LEN)
 
 
 def build_security_table(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -41,7 +38,7 @@ def build_security_table(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     amount outstanding used for the balance check."""
     opsec, secday = panel["opsec"], panel["secday"]
     d = opsec.copy()
-    d["base"] = _base(d["cusip"])
+    d["base"] = normalize_cusip(d["cusip"])
     d["ytm"] = (pd.to_datetime(d["maturity_date"])
                 - pd.to_datetime(d["operation_date"])).dt.days / 365.25
     d["coupon"] = pd.to_numeric(d["coupon_rate"], errors="coerce")
@@ -57,7 +54,7 @@ def build_security_table(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     tab["cbucket"] = pd.cut(tab["coupon"], bins=COUPON_BINS, labels=COUPON_LABELS)
     tab["cell"] = tab["mbucket"].astype(str) + " x " + tab["cbucket"].astype(str)
     sd = secday.copy()
-    sd["base"] = _base(sd["cusip"])
+    sd["base"] = normalize_cusip(sd["cusip"])
     outstanding = sd.groupby("base")["amount_outstanding"].mean().rename("outstanding")
     tab = tab.merge(outstanding, on="base", how="left")
     return tab.dropna(subset=["mbucket", "cbucket"])
@@ -96,9 +93,9 @@ def matched_event_study(panel: dict[str, pd.DataFrame], tab_matched: pd.DataFram
     from src.analysis.event_study import estimate_event_study, parallel_trends_test
     keep = set(tab_matched["base"])
     sd = panel["secday"].copy()
-    sd = sd[_base(sd["cusip"]).isin(keep)]
+    sd = sd[normalize_cusip(sd["cusip"]).isin(keep)]
     op = panel["opsec"].copy()
-    op = op[_base(op["cusip"]).isin(keep)]
+    op = op[normalize_cusip(op["cusip"]).isin(keep)]
     theta = estimate_event_study(sd, op, outcome="ofr_spread", K=K, alpha=alpha)
     return theta, parallel_trends_test(theta, alpha=alpha)
 
@@ -143,7 +140,7 @@ def _delta_spread(panel: dict[str, pd.DataFrame], matched: pd.DataFrame,
     a per-cell pseudo-event date for controls). Returns one row per security with the
     change and the pre-period liquidity level."""
     sd = panel["secday"].copy()
-    sd["base"] = _base(sd["cusip"])
+    sd["base"] = normalize_cusip(sd["cusip"])
     sd["date"] = pd.to_datetime(sd["date"])
     sd = sd[sd["base"].isin(set(matched["base"]))]
     rows = []
@@ -170,7 +167,7 @@ def _delta_spread(panel: dict[str, pd.DataFrame], matched: pd.DataFrame,
 def _cohort_dates(panel: dict[str, pd.DataFrame]) -> pd.Series:
     """First repurchase (cohort) date per treated base CUSIP."""
     op = panel["opsec"].copy()
-    op["base"] = _base(op["cusip"])
+    op["base"] = normalize_cusip(op["cusip"])
     bought = op[op["bought"].astype(bool)]
     return pd.to_datetime(bought.groupby("base")["operation_date"].min())
 

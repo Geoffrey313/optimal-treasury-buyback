@@ -61,28 +61,38 @@ premium.
   systematically repurchases the shorter-maturity, lower-coupon off-the-run securities
   (maturity and coupon significant).
 - Because that selection is systematic, a naive treatment effect is not identified; the
-  direct treatment-effect estimates and their diagnostics are provided as supplementary
-  robustness in `results/`.
+  direct treatment-effect estimates and their diagnostics are reproduced into `results/`.
 
 ## Repository structure
 
 ```
-src/            reproduction package (common, data, engine, analysis, figures)
-data/           transformed input data (public layers shipped; CRSP layer on request)
-reproduce.py    single deterministic entry point (writes results/ and the manuscript numbers)
+src/             reproduction package (common, data, engine, analysis, figures)
+data/            transformed input data (public layers shipped; CRSP layer on request)
+data/README.md   data layout, per-layer source and licensing, coverage
+reproduce.py     single deterministic entry point
 requirements.txt pinned dependencies
-.env.example    expected credential keys, empty values
+.env.example     expected credential keys, empty values
 ```
+
+`reproduce.py` creates two output locations, neither of them versioned: the numeric
+result tables in `results/`, and the generated figures and LaTeX tables in
+`manuscript/en/ssrn/figures/` and `manuscript/fr/ssrn/figures/`, one set per language.
+Both are absent from a fresh clone and appear on the first run.
 
 ## Reproduction
 
 1. `python -m venv .venv && source .venv/bin/activate`
 2. `pip install -r requirements.txt`
-3. Copy `.env.example` to `.env.local` and fill WRDS credentials (needed only to regenerate
-   the licensed CRSP layer; the public layers ship with the repo).
-4. `python reproduce.py` runs the pipeline: it reads the transformed data, runs the estimation and the
-   accounting, and writes the result tables (results/) and the manuscript's headline
-   numbers. Deterministic: outputs carry a stable digest across re-runs.
+3. Copy `.env.example` to `.env.local` and fill the WRDS credentials, then regenerate the
+   licensed CRSP layer as described in `data/crsp/README.md`. This step is required: the
+   secondary-market panel is built from CRSP per-CUSIP daily prices, so the pipeline needs
+   that layer in place even though the public layers ship with the repository.
+4. `python reproduce.py` runs the pipeline: it reads the transformed data, runs the
+   estimation and the accounting, and writes the result tables, the generated figures, and
+   the manuscript's headline numbers. It is deterministic: a fixed seed drives every draw,
+   no published number carries a timestamp, and the entry point checks each output it
+   rewrites against the SHA-256 digest of the file already on disk, so a re-run on the
+   same inputs reproduces byte-identical outputs.
 
 ## Data availability
 

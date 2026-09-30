@@ -1,4 +1,4 @@
-"""Issuance impact :math:`\\lambda_I` (workplan P4).
+"""Issuance impact :math:`\\lambda_I`.
 
 Estimates the supply elasticity of yields from the yield change around each
 auction. Implements Eq.~(issimpact) of the model,
@@ -20,11 +20,14 @@ The specification carries two-way fixed effects, sector and month. The sample is
 split by security type: notes and bonds together are the main specification,
 because the preferred-habitat mechanism targets coupon securities, and bills are
 a separate specification reported as robustness. Because there are only a handful
-of sectors, the classic sector-clustered t is preliminary; a wild cluster
-bootstrap p-value and confidence interval are reported alongside the point
-estimate. The estimate is returned as :class:`src.common.schema.Estimate` in raw
-units (yield change per dollar sold); the value-curvature conversion happens in
-:mod:`src.engine.optimum`.
+of sectors, inference rests on a wild cluster bootstrap p-value and confidence
+interval reported alongside the point estimate and the classic sector-clustered
+t. The estimate is returned as :class:`src.common.schema.Estimate` in raw units
+(yield change per dollar sold); the entry point rescales it to a
+per-billion-dollar figure for reading.
+
+Inputs are the ``AUCTION`` panel of :mod:`src.common.schema` and the daily
+Treasury par-yield curve shipped in ``data/curves/``.
 """
 from __future__ import annotations
 
@@ -35,11 +38,9 @@ import pandas as pd
 import statsmodels.formula.api as smf
 
 from src.common import schema
+from src.common.config import DAYS_PER_WEEK, DAYS_PER_YEAR, MONTHS_PER_YEAR
 from src.data.load_public import load_par_yields
 from src.engine.absorption import (
-    DAYS_PER_WEEK,
-    DAYS_PER_YEAR,
-    MONTHS_PER_YEAR,
     bootstrap_note,
     coerce_categorical,
     coerce_numeric,
@@ -234,9 +235,9 @@ def estimate_lambda_I(
     declared event window. ``secday`` is accepted for interface compatibility and
     is unused (Delta y comes from the par-yield curve).
 
-    The point estimate carries the classic sector-clustered t (preliminary,
-    because there are few sectors) and a wild cluster bootstrap p-value and
-    confidence interval in the note. Raw units: yield change per dollar sold.
+    The point estimate carries the classic sector-clustered t and, because there
+    are few sectors, a wild cluster bootstrap p-value and confidence interval in
+    the note. Raw units: yield change per dollar sold.
     """
     panel = build_issuance_panel(auction, par_yields, window=window)
     panel = panel[panel[_CLASS].isin(tuple(classes))]
@@ -253,7 +254,7 @@ def estimate_lambda_I(
     fit, n_clusters = fit_clustered(model, panel[_CLUSTER_KEY])
     wcb = wild_cluster_bootstrap(fit, _ISSUE, panel[_CLUSTER_KEY])
     inference = (
-        "classic sector-clustered t PRELIMINARY; "
+        "classic sector-clustered t; "
         if n_clusters >= 2
         else "single sector -> HC1 robust t; "
     )

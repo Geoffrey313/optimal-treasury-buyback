@@ -19,21 +19,22 @@ No figure carries an internal title (the title is the LaTeX caption and the full
 description the note under the figure); axis labels denoting quantities are set
 in the manuscript language with units spelled out. The figures are:
 
-1. ``yield_path``       daily ten-year par yield over the program window;
-2. ``decomposition``    the ACM ten-year level split into term premium and expected rate;
-3. ``scale``            the program against coupon issuance, par and ten-year equivalents;
-4. ``reaction``         the Treasury reaction-function coefficients, two specifications;
-5. ``parallel_trends``  the staggered event-study path with its rejected pre-trend;
-6. ``inversion``        term-premium compression against removal size, with the QE scale.
+1. ``yield_path``     daily ten-year par yield over the program window;
+2. ``decomposition``  the ACM ten-year level split into term premium and expected rate;
+3. ``scale``          the program against coupon issuance, par and ten-year equivalents;
+4. ``reaction``       the Treasury reaction-function coefficients, two specifications;
+5. ``inversion``      term-premium compression against removal size, with the QE scale.
+
+Inputs are the assembled panels, the analysis modules, and the shipped curve
+files; :func:`render_all` writes one ``.tex`` file per figure into the figure
+directory of the requested language.
 """
 from __future__ import annotations
 
 import pandas as pd
 
-from src.common.config import SAMPLE_START
-from src.common.paths import DATA_CURVES, RESULTS_DIR, figures_dir
-
-WINDOW_END = "2026-09-30"
+from src.common.config import DAYS_PER_YEAR, SAMPLE_START, WINDOW_END
+from src.common.paths import DATA_CURVES, figures_dir
 
 # Language-specific label text (no English leaks into the FR figures).
 L = {
@@ -49,8 +50,6 @@ L = {
         "spec2": "Adds maturity-band FE", "absorbed": "absorbed",
         "maturity": "Years to maturity", "coupon": "Coupon rate",
         "ofr": "On/off-the-run spread", "bidask": "Bid-ask spread",
-        "eventtime": "Event time",
-        "att": "Effect on the spread",
         "removal": "Ten-year equivalents removed",
         "compression": "Term-premium compression",
         "elast_lo": "Low elasticity", "elast_hi": "High elasticity",
@@ -68,8 +67,6 @@ L = {
         "spec2": "Ajoute EF de bande de maturit\\'e", "absorbed": "absorb\\'ee",
         "maturity": "Ann\\'ees jusqu'\\`a \\'ech\\'eance", "coupon": "Taux de coupon",
         "ofr": "\\'Ecart march\\'e r\\'ecent/hors", "bidask": "\\'Ecart bid-ask",
-        "eventtime": "Temps d'\\'ev\\'enement",
-        "att": "Effet sur l'\\'ecart",
         "removal": "\\'Equivalents-dix-ans retir\\'es",
         "compression": "Compression de prime de terme",
         "elast_lo": "\\'Elasticit\\'e basse", "elast_hi": "\\'Elasticit\\'e haute",
@@ -80,7 +77,7 @@ L = {
 
 def _dec_year(ts: pd.Timestamp) -> float:
     ts = pd.Timestamp(ts)
-    return ts.year + (ts.dayofyear - 1) / 365.25
+    return ts.year + (ts.dayofyear - 1) / DAYS_PER_YEAR
 
 
 def _co(xs, ys, prec: int = 4) -> str:
@@ -227,57 +224,7 @@ def fig_reaction(panel, language: str) -> None:
 
 
 # --------------------------------------------------------------------------
-# 5. Event-study path with the rejected pre-trend
-# --------------------------------------------------------------------------
-def fig_parallel_trends(panel, language: str) -> None:
-    t = L[language]
-    es = pd.read_csv(RESULTS_DIR / "event_study.csv").sort_values("k").dropna(subset=["theta"])
-    s = 1e4  # yield fraction -> basis points
-    k = es["k"].astype(float).tolist()
-    mid = (es["theta"] * s).tolist()
-    lo = (es["ci_low"] * s).tolist()
-    hi = (es["ci_high"] * s).tolist()
-    ymin, ymax = min(lo) * 1.15, max(hi) * 1.15
-    kmin, kmax = min(k), max(k)
-    opts = (f"  xlabel={{{t['eventtime']}}}, ylabel={{{t['att']}}} ({t['bp']}),\n"
-            f"  ymin={ymin:.4f}, ymax={ymax:.4f}, enlarge x limits=0.03")
-    body = (f"\\fill[cTP, opacity=0.06] (axis cs:{kmin:.1f},{ymin:.4f}) rectangle (axis cs:-1.5,{ymax:.4f});\n"
-            f"\\addplot[black!45, thin, forget plot] coordinates {{({kmin:.1f},0) ({kmax:.1f},0)}};\n"
-            f"\\draw[cRef, dotted] (axis cs:-1,{ymin:.4f}) -- (axis cs:-1,{ymax:.4f});\n"
-            f"\\addplot[name path=lo, draw=none, forget plot] coordinates {{{_co(k, lo)}}};\n"
-            f"\\addplot[name path=hi, draw=none, forget plot] coordinates {{{_co(k, hi)}}};\n"
-            f"\\addplot[cLevel, opacity=0.15, forget plot] fill between[of=lo and hi];\n"
-            f"\\addplot[cLevel, thick, mark=*, mark size=1pt] coordinates {{{_co(k, mid)}}};")
-    _write(language, "parallel_trends", opts, body)
-
-
-def fig_matched_pretrend(panel, language: str) -> None:
-    """The matched event-study path (US-04): eligible-not-bought controls in the same
-    maturity-by-coupon cell. Shown to make the point that the pre-trend is still
-    rejected, so the direct effect is a bound, not an identified effect."""
-    t = L[language]
-    es = pd.read_csv(RESULTS_DIR / "matched_event_study.csv").sort_values("k").dropna(subset=["theta"])
-    s = 1e4  # yield fraction -> basis points
-    k = es["k"].astype(float).tolist()
-    mid = (es["theta"] * s).tolist()
-    lo = (es["ci_low"] * s).tolist()
-    hi = (es["ci_high"] * s).tolist()
-    ymin, ymax = min(lo) * 1.15, max(hi) * 1.15
-    kmin, kmax = min(k), max(k)
-    opts = (f"  xlabel={{{t['eventtime']}}}, ylabel={{{t['att']}}} ({t['bp']}),\n"
-            f"  ymin={ymin:.4f}, ymax={ymax:.4f}, enlarge x limits=0.03")
-    body = (f"\\fill[cTP, opacity=0.06] (axis cs:{kmin:.1f},{ymin:.4f}) rectangle (axis cs:-1.5,{ymax:.4f});\n"
-            f"\\addplot[black!45, thin, forget plot] coordinates {{({kmin:.1f},0) ({kmax:.1f},0)}};\n"
-            f"\\draw[cRef, dotted] (axis cs:-1,{ymin:.4f}) -- (axis cs:-1,{ymax:.4f});\n"
-            f"\\addplot[name path=lo, draw=none, forget plot] coordinates {{{_co(k, lo)}}};\n"
-            f"\\addplot[name path=hi, draw=none, forget plot] coordinates {{{_co(k, hi)}}};\n"
-            f"\\addplot[cProg, opacity=0.15, forget plot] fill between[of=lo and hi];\n"
-            f"\\addplot[cProg, thick, mark=*, mark size=1pt] coordinates {{{_co(k, mid)}}};")
-    _write(language, "matched_pretrend", opts, body)
-
-
-# --------------------------------------------------------------------------
-# 6. The inversion: compression against removal size, with the QE scale
+# 5. The inversion: compression against removal size, with the QE scale
 # --------------------------------------------------------------------------
 def fig_inversion(panel, language: str) -> None:
     from src.analysis.term_premium import compute as tp_compute, ELASTICITY_BP_PER_100BN

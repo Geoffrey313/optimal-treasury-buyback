@@ -1,4 +1,4 @@
-"""The Treasury's reaction function (US-03): which off-the-run securities does the
+"""The Treasury's reaction function: which off-the-run securities does the
 buyback program repurchase?
 
 This is the paper's one identified empirical result. It is a positive, descriptive
@@ -10,7 +10,7 @@ effects (so the comparison is within an operation, across eligible securities) a
 standard errors clustered by security. A linear model is used rather than a logit
 because the operation fixed effects cause separation in a logit.
 
-Honesty: all predictors are reported, significant or not. The robust, significant
+All predictors are reported, significant or not. The robust, significant
 drivers are maturity and coupon (the program buys the shorter, lower-coupon
 off-the-run securities). The direct liquidity measures (the on/off-the-run spread
 and the bid-ask spread) are not robustly signed across specifications, so the
@@ -76,7 +76,7 @@ def robustness_within_maturity(panel: dict[str, pd.DataFrame]) -> dict[str, sche
     maturity band. This is the specification that tests whether the liquidity signs
     are robust: maturity and the off/on-the-run status are collinear (older, shorter
     off-the-runs trade at wider spreads), so absorbing the maturity band is the
-    honest check on whether liquidity carries independent information."""
+    check on whether liquidity carries information independent of maturity."""
     d = build_selection_panel(panel).copy()
     d["mbucket"] = pd.cut(d["ytm"], bins=[0, 2, 5, 10, 30, 100],
                           labels=["0-2", "2-5", "5-10", "10-30", "30+"])

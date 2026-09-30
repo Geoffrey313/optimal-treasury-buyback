@@ -1,8 +1,8 @@
 # ---- Excluded from publication (present in workspace, never pushed) ----
-# Manuscripts (EN, FR, all journal versions) — reproducible, never stored
+# Manuscripts (EN, FR, all journal versions): reproducible, never stored
 manuscript/
 
-# Generated results (figures, tables, numeric outputs) — reproducible by code
+# Generated results (figures, tables, numeric outputs): reproducible by code
 results/
 
 # Internal working directory: audit outputs, session notes, drafts
@@ -22,7 +22,7 @@ tests/
 data/raw/
 data/licensed/
 *.raw.parquet
-# CRSP Treasury layer is licensed via WRDS — never publish it (keep the README)
+# CRSP Treasury layer is licensed via WRDS; never publish it (keep the README)
 data/crsp/*.parquet
 data/crsp/*.csv
 

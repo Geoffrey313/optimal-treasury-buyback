@@ -1,9 +1,10 @@
 """Load the transformed PUBLIC Treasury panels from parquet (no network).
 
-These loaders read the parquet files written by
-``src.data.acquire.public_sources`` and return pandas DataFrames. They never
-reach the network; regenerate the parquet with the acquisition module if a
-file is missing. Output directories come from ``src.common.paths``.
+These loaders read the public parquet files shipped in ``data/`` and return
+pandas DataFrames: buyback operations, per-CUSIP operation details, auction
+results, and the daily Treasury par-yield curve. They never reach the network,
+and their directories come from :mod:`src.common.paths`. See ``data/README.md``
+for the layout and the source of each file.
 """
 from __future__ import annotations
 
@@ -16,8 +17,8 @@ def _read(directory, name: str) -> pd.DataFrame:
     path = directory / name
     if not path.exists():
         raise FileNotFoundError(
-            f"{path} not found; run "
-            "`python -m src.data.acquire.public_sources` to regenerate it."
+            f"{path} not found; this public layer ships with the repository, "
+            "see data/README.md for its expected layout."
         )
     return pd.read_parquet(path)
 

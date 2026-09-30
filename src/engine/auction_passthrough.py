@@ -1,4 +1,4 @@
-"""Auction channel pass-through :math:`\\rho` (workplan P5).
+"""Auction channel pass-through :math:`\\rho`.
 
 Tests whether the secondary-market liquidity gain from a buyback reaches the
 primary market. Implements Eq.~(auctionpass) of the model,
@@ -19,9 +19,11 @@ the issue size enters as a control here to hold the supply channel fixed while
 ``rho`` picks up the compression channel.
 
 Standard errors are clustered by sector; because there are only a handful of
-sectors, the classic clustered t is preliminary and a wild cluster bootstrap
-p-value and confidence interval are reported alongside each estimate. Each
-outcome returns an :class:`src.common.schema.Estimate`.
+sectors, a wild cluster bootstrap p-value and confidence interval are reported
+alongside each estimate and its classic clustered t. Each outcome returns an
+:class:`src.common.schema.Estimate`.
+
+Inputs are the ``AUCTION`` and ``OPS`` panels of :mod:`src.common.schema`.
 """
 from __future__ import annotations
 
@@ -31,8 +33,8 @@ import pandas as pd
 import statsmodels.formula.api as smf
 
 from src.common import schema
+from src.common.config import MONTHS_PER_YEAR
 from src.engine.absorption import (
-    MONTHS_PER_YEAR,
     bootstrap_note,
     coerce_categorical,
     coerce_numeric,
@@ -158,10 +160,10 @@ def estimate_rho(
     Returns a dict keyed by outcome (``tail``, ``bid_to_cover``,
     ``indirect_share``, ``concession``); each value is the coefficient on buyback
     intensity under two-way sector and month fixed effects with the issue-size
-    control. The classic sector-clustered t is preliminary (few sectors); a wild
-    cluster bootstrap p-value and confidence interval are reported in the note.
-    Outcomes with no data (``tail`` and ``concession`` are still all-NaN in the
-    panel) return a clearly-noted NaN.
+    control. Alongside the classic sector-clustered t, a wild cluster bootstrap
+    p-value and confidence interval are reported in the note, since the panel has
+    few sectors. An outcome with no usable observation returns a clearly-noted
+    NaN.
 
     The buyback-intensity source is pinned to the Liquidity Support program (the
     arm whose secondary-market liquidity effect the pass-through tests); cash
@@ -193,7 +195,7 @@ def estimate_rho(
             se=float(fit.bse[_INTENSITY]),
             tstat=float(fit.tvalues[_INTENSITY]),
             n=int(fit.nobs),
-            note=f"rho on {outcome}; sector+month FE; classic sector-clustered t "
-            f"PRELIMINARY; " + bootstrap_note(wcb),
+            note=f"rho on {outcome}; sector+month FE; classic sector-clustered t; "
+            + bootstrap_note(wcb),
         )
     return results

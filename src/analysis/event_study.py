@@ -28,12 +28,13 @@ an exact joint Wald test of the pre-period coefficients.
 """
 from __future__ import annotations
 
-from typing import Optional
 
 import numpy as np
 import pandas as pd
 
-from src.common import config, schema
+from src.engine.absorption import normalize_cusip
+
+from src.common import schema
 
 # Column names of the returned event-study frame (kept here, not repeated).
 K_COL = "k"
@@ -46,22 +47,11 @@ ESTIMATOR_COL = "estimator"
 
 REFERENCE_K = -1          # omitted (normalizing) relative period
 DEFAULT_ALPHA = 0.05      # two-sided confidence level for the reported CIs
-CUSIP_BASE_LENGTH = 8     # CRSP quotes the 8-char base; fiscal feeds carry 9
 
 
 # --------------------------------------------------------------------------
 # Panel construction
 # --------------------------------------------------------------------------
-def _normalize_cusip(series: pd.Series) -> pd.Series:
-    """Return the shared 8-character base CUSIP so buyback and CRSP feeds join.
-
-    CRSP (SECDAY) quotes the 8-character base CUSIP while the fiscal-data feeds
-    (OPSEC) carry the full 9-character CUSIP (base plus a check digit); the two
-    only join once both are truncated to the base. This mirrors the engine's
-    ``normalize_cusip`` without importing the engine module.
-    """
-    return series.astype(str).str.strip().str.slice(0, CUSIP_BASE_LENGTH)
-
 
 def _cohorts(opsec: pd.DataFrame) -> pd.DataFrame:
     """First operation date at which each security is bought (its cohort).
@@ -69,7 +59,7 @@ def _cohorts(opsec: pd.DataFrame) -> pd.DataFrame:
     Keyed on the normalized base CUSIP so cohorts align with SECDAY.
     """
     bought = opsec.loc[opsec["bought"].astype(bool), ["cusip", "operation_date"]].copy()
-    bought["cusip"] = _normalize_cusip(bought["cusip"])
+    bought["cusip"] = normalize_cusip(bought["cusip"])
     first = bought.groupby("cusip", as_index=False)["operation_date"].min()
     return first.rename(columns={"operation_date": "cohort_date"})
 
@@ -92,7 +82,7 @@ def build_event_panel(
         raise ValueError(f"K must be a positive integer, got {K}")
 
     panel = secday[["cusip", "date", outcome]].copy()
-    panel["cusip"] = _normalize_cusip(panel["cusip"])
+    panel["cusip"] = normalize_cusip(panel["cusip"])
     panel = panel.rename(columns={outcome: "y"}).dropna(subset=["y"])
 
     # A single date -> period map shared by both operation and market dates.

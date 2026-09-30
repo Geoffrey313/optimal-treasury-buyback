@@ -1,4 +1,4 @@
-"""Absorption cost :math:`\\lambda_B` (workplan P3).
+"""Absorption cost :math:`\\lambda_B`.
 
 Estimates the marginal cost of absorbing repurchased securities from the
 end-of-day price change around each buyback operation. Implements
@@ -14,17 +14,17 @@ read as a marginal cost of absorption: it bundles the price impact of a large
 purchase, the selection of the cheapest offers, and the liquidity value handed
 to sellers.
 
-Two estimators are exposed:
+Inputs are the ``OPSEC`` and ``SECDAY`` panels of
+:mod:`src.common.schema`. The estimator is ordinary least squares of the price
+change on the accepted amount, with an operation fixed effect and standard
+errors clustered by security (CUSIP), returned as a
+:class:`src.common.schema.Estimate` in raw units (price change per dollar of
+par); the entry point rescales it to a per-billion-dollar figure for reading.
 
-* ordinary least squares of the price change on the accepted amount, and
-* an instrumental-variables (2SLS) variant that instruments the accepted amount
-  with the tax-inflow-month dummy ``z_i`` (``OPSEC``) to address which security
-  is selected for repurchase.
-
-Standard errors are clustered by security (CUSIP). Estimates are returned as
-:class:`src.common.schema.Estimate`; the reduced-form slope keeps its raw units
-(price change per dollar of par) and is converted to a value curvature later, in
-:mod:`src.engine.optimum`.
+The module also holds the estimation helpers shared with
+:mod:`src.engine.issuance` and :mod:`src.engine.auction_passthrough`: dtype
+coercion, the base-CUSIP join key, year-month time labels, and the wild cluster
+bootstrap used when a design has few clusters.
 """
 from __future__ import annotations
 
@@ -35,19 +35,13 @@ import pandas as pd
 import statsmodels.formula.api as smf
 
 from src.common import schema
-from src.common.config import RANDOM_SEED
+from src.common.config import DAYS_PER_YEAR, RANDOM_SEED
 
 # ----- Event-window definition (named, not magic) -----
 #: Days before the operation used for the pre-operation reference price.
 PRE_OFFSET_DAYS: Final[int] = 1
 #: Days after the operation used for the post-operation price.
 POST_OFFSET_DAYS: Final[int] = 1
-#: Number of days in a year, for the age (time-to-maturity) control.
-DAYS_PER_YEAR: Final[float] = 365.25
-#: Months in a year, for converting maturity/term tokens to years.
-MONTHS_PER_YEAR: Final[float] = 12.0
-#: Days in a week, for converting a "Week" term token to years.
-DAYS_PER_WEEK: Final[float] = 7.0
 
 #: Name of the endogenous regressor and of the instrument.
 _ENDOG: Final[str] = "par_accepted"
@@ -118,25 +112,6 @@ def month_period(dates: pd.Series) -> pd.Series:
 def _empty_estimate(note: str) -> schema.Estimate:
     """A NaN estimate for a genuinely empty or rank-deficient design."""
     return schema.Estimate(value=float("nan"), se=float("nan"), n=0, note=note)
-
-
-def _drop_collinear(design: pd.DataFrame) -> pd.DataFrame:
-    """Drop zero-variance and linearly dependent columns to keep full rank.
-
-    A named intercept column ``const`` is always kept; among the remaining
-    columns, any that a QR decomposition finds redundant is removed so
-    linearmodels does not reject the design.
-    """
-    keep_first = [c for c in design.columns if c == "const"]
-    candidates = [c for c in design.columns if c != "const"]
-    kept = list(keep_first)
-    for col in candidates:
-        if design[col].nunique(dropna=True) < 2 and col not in keep_first:
-            continue
-        trial = design[kept + [col]].to_numpy(dtype=float)
-        if np.linalg.matrix_rank(trial) == trial.shape[1]:
-            kept.append(col)
-    return design[kept]
 
 
 def has_estimable_design(
@@ -412,15 +387,13 @@ def estimate_lambda_B(
 ) -> schema.Estimate:
     """Estimate the absorption slope ``lambda_B`` (Eq. buyimpact).
 
-    ``method`` is ``"ols"`` (default) or ``"iv"`` (2SLS instrumenting the
-    accepted amount with ``z_i``). Standard errors are clustered by CUSIP. The
+    The estimator is ordinary least squares with an operation fixed effect and
+    standard errors clustered by CUSIP; ``method`` accepts only ``"ols"``. The
     returned estimate is the marginal cost of absorption in raw units (price
     change per dollar of par accepted).
     """
-    if method == "iv":
-        return estimate_lambda_B_iv(opsec, secday)
     if method != "ols":
-        raise ValueError(f"method must be 'ols' or 'iv', got {method!r}")
+        raise ValueError(f"method must be 'ols', got {method!r}")
 
     panel = build_absorption_panel(opsec, secday)
     if not has_estimable_design(panel, _ENDOG):
@@ -433,80 +406,4 @@ def estimate_lambda_B(
         _ENDOG,
         note="lambda_B OLS with operation FE (delta_w); SE clustered by CUSIP; "
         "raw price/$ units",
-    )
-
-
-def estimate_lambda_B_iv(
-    opsec: pd.DataFrame, secday: pd.DataFrame
-) -> schema.Estimate:
-    """Instrumental-variables (2SLS) estimate of ``lambda_B``.
-
-    The accepted amount ``par_accepted`` is instrumented by the tax-inflow-month
-    dummy ``z_i``, addressing the selection of which security is repurchased.
-    Uses :class:`linearmodels.iv.IV2SLS` when available, otherwise a two-stage
-    statsmodels fallback. Standard errors are clustered by CUSIP.
-
-    NOT reported as a headline estimate: on the 2024-2026 sample the instrument
-    z_i fails the CA-2.2b validity gate (weak first stage and covariate
-    imbalance; see :mod:`src.analysis.instrument_validity`). Retained for the
-    record and for the exclusion diagnostics, not for the absorption cost, which
-    rests on the OLS estimate with operation fixed effects.
-    """
-    panel = build_absorption_panel(opsec, secday)
-    panel = panel.dropna(subset=[_INSTRUMENT])
-    controls = ["coupon_rate", "age"]
-    if not has_estimable_design(panel, _ENDOG) or panel[_INSTRUMENT].nunique() < 2:
-        return _empty_estimate("lambda_B IV: empty design or no instrument variation")
-
-    try:
-        from linearmodels.iv import IV2SLS
-
-        # All design columns are already float64 (see build_absorption_panel).
-        # Operation fixed effect delta_w enters as a dummy block, as in the OLS.
-        exog = panel[controls].copy()
-        exog = exog.assign(const=1.0)
-        sectors = pd.get_dummies(
-            panel["sector"], prefix="sector", drop_first=True, dtype=float
-        )
-        op_fe = pd.get_dummies(
-            panel[_OP_FE], prefix="op", drop_first=True, dtype=float
-        )
-        exog = _drop_collinear(pd.concat([exog, sectors, op_fe], axis=1))
-        res = IV2SLS(
-            dependent=panel["delta_p"],
-            exog=exog,
-            endog=panel[[_ENDOG]],
-            instruments=panel[[_INSTRUMENT]],
-        ).fit(cov_type="clustered", clusters=panel[_CLUSTER_KEY])
-        return schema.Estimate(
-            value=float(res.params[_ENDOG]),
-            se=float(res.std_errors[_ENDOG]),
-            tstat=float(res.tstats[_ENDOG]),
-            n=int(res.nobs),
-            note="lambda_B 2SLS (IV=z_i, linearmodels) with operation FE (delta_w); "
-            "SE clustered by CUSIP",
-        )
-    except Exception:  # pragma: no cover - fallback path
-        return _two_stage_least_squares_fallback(panel, controls)
-
-
-def _two_stage_least_squares_fallback(
-    panel: pd.DataFrame, controls: list[str]
-) -> schema.Estimate:
-    """Manual 2SLS via two statsmodels OLS passes (used if linearmodels fails).
-
-    Stage 1 projects the endogenous amount on the instrument and controls;
-    stage 2 regresses the price change on the fitted amount and controls.
-    """
-    ctrl_terms = " + ".join(controls + ["C(sector)", f"C({_OP_FE})"])
-    first = smf.ols(f"{_ENDOG} ~ {_INSTRUMENT} + {ctrl_terms}", data=panel).fit()
-    stage2 = panel.assign(_fitted_endog=first.fittedvalues)
-    second = smf.ols(f"delta_p ~ _fitted_endog + {ctrl_terms}", data=stage2).fit(
-        cov_type="cluster", cov_kwds={"groups": stage2[_CLUSTER_KEY]}
-    )
-    return _estimate_from_ols(
-        second,
-        "_fitted_endog",
-        note="lambda_B 2SLS fallback (IV=z_i, statsmodels) with operation FE; "
-        "SE clustered by CUSIP",
     )

@@ -1,4 +1,4 @@
-"""Panel assembly for the Treasury-buyback study (workplan P1.4).
+"""Panel assembly for the Treasury-buyback study.
 
 This module turns the loaded source tables (public Treasury operations, auctions,
 par yields, and licensed CRSP daily/issue files) into the four analysis panels
@@ -42,8 +42,6 @@ from src.data.load_public import (
 # column to its 1st and 99th within-sample percentiles so that a handful of
 # stale-quote or thin-market observations do not drive the estimates.
 WINSOR: tuple[float, float] = (0.01, 0.99)
-#: CRSP tfz_dly.tdduratn is quoted in days; divide by this to get years.
-DAYS_PER_YEAR: float = 365.25
 
 # Maturity sectors, keyed by the on-the-run tenor structure of US Treasuries.
 # Each entry is (label, upper bound in years); a security is placed in the first
@@ -59,8 +57,6 @@ SECTOR_BUCKETS: tuple[tuple[str, float], ...] = (
     ("20-30Y", 30.0),
     (">30Y", math.inf),
 )
-
-_DAYS_PER_YEAR: float = 365.25
 
 # Secondary-market columns winsorized in SECDAY: the derived liquidity measures.
 _SECDAY_WINSOR_COLS: tuple[str, ...] = ("bid_ask", "ofr_spread")
@@ -105,8 +101,8 @@ def _ratio(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
 
 
 def _years_between(later: pd.Series, earlier: pd.Series) -> pd.Series:
-    """Signed years from ``earlier`` to ``later`` (calendar days / 365.25)."""
-    return (_dates(later) - _dates(earlier)).dt.days / _DAYS_PER_YEAR
+    """Signed years from ``earlier`` to ``later``, in mean Gregorian years."""
+    return (_dates(later) - _dates(earlier)).dt.days / config.DAYS_PER_YEAR
 
 
 def _sector_of(years: float) -> str:
@@ -296,7 +292,7 @@ def build_secday_panel() -> pd.DataFrame:
             # every consumer reads duration in years (see schema.SECDAY).
             "duration": pd.to_numeric(
                 _col(merged, ("tdduratn", "duration"), required=False), errors="coerce"
-            ).where(lambda s: s > 0) / DAYS_PER_YEAR,
+            ).where(lambda s: s > 0) / config.DAYS_PER_YEAR,
             "amount_outstanding": pd.to_numeric(
                 _col(merged, ("tdpubout", "amount_outstanding"), required=False),
                 errors="coerce",
@@ -322,7 +318,8 @@ def _tenor_label_years(label: str) -> float:
     """Years represented by a par-yield column label, e.g. '1 Mo' -> 1/12,
     '2 Yr' -> 2, '1.5 Month' -> 0.125."""
     n = float(re.findall(r"[\d.]+", label)[0])
-    return n / 12.0 if ("Mo" in label or "Month" in label) else n
+    is_months = "Mo" in label or "Month" in label
+    return n / config.MONTHS_PER_YEAR if is_months else n
 
 
 def _term_to_years(term: pd.Series) -> pd.Series:
@@ -336,11 +333,11 @@ def _term_to_years(term: pd.Series) -> pd.Series:
             return float("nan")
         n, low = float(found[0]), t.lower()
         if "week" in low:
-            return n * 7.0 / 365.25
+            return n * config.DAYS_PER_WEEK / config.DAYS_PER_YEAR
         if "day" in low:
-            return n / 365.25
+            return n / config.DAYS_PER_YEAR
         if "month" in low:
-            return n / 12.0
+            return n / config.MONTHS_PER_YEAR
         if "year" in low:
             return n
         return float("nan")
@@ -452,15 +449,7 @@ def build_panels() -> dict[str, pd.DataFrame]:
 
 
 if __name__ == "__main__":
-    import sys
-
-    try:
-        panels = build_panels()
-    except FileNotFoundError:
-        # Input data not acquired yet (loaders read data/ which may be absent).
-        # The panel logic is complete; nothing to assemble until data lands.
-        print("input data not present yet; code ready")
-        sys.exit(0)
-
-    for name, panel in panels.items():
+    # Shape check on the assembled panels; a missing input raises the loader's
+    # own message naming the file to regenerate.
+    for name, panel in build_panels().items():
         print(f"{name:>8}: {panel.shape}")

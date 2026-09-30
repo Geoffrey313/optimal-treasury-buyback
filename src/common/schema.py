@@ -7,7 +7,7 @@ Do not rename a field without updating every consumer.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # --------------------------------------------------------------------------
 # Operation-level panel (one row per buyback operation)

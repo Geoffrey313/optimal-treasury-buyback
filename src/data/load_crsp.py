@@ -1,10 +1,11 @@
 """Load the locally cached CRSP Treasury tables (no network access).
 
-These loaders read the parquet files written by
-``src.data.acquire.crsp`` into pandas DataFrames. They perform no WRDS access,
-so they run without credentials once the licensed layer has been regenerated
-under ``data/crsp/`` (gitignored). Callers downstream (panel assembly) import
-from here rather than reaching for the parquet paths directly.
+These loaders read the parquet files of the licensed CRSP layer into pandas
+DataFrames. They perform no WRDS access, so they run without credentials once a
+subscriber has regenerated that layer under ``data/crsp/`` (not redistributed;
+see ``data/crsp/README.md`` for the library and tables to pull). Callers
+downstream (panel assembly) import from here rather than reaching for the
+parquet paths directly.
 """
 from __future__ import annotations
 
@@ -21,8 +22,8 @@ TFZ_ISS_PARQUET: Path = DATA_CRSP / "tfz_iss.parquet"
 def _load(path: Path) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(
-            f"{path} not found. Regenerate the CRSP layer first: "
-            f"python -m src.data.acquire.crsp"
+            f"{path} not found. The CRSP layer is licensed and not "
+            f"redistributed; regenerate it as described in data/crsp/README.md."
         )
     return pd.read_parquet(path)
 

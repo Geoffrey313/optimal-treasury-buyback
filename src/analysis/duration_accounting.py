@@ -1,4 +1,4 @@
-"""Duration accounting (US-03 S1): the buyback removes only a small fraction of
+"""Duration accounting: the buyback removes only a small fraction of
 the coupon supply the Treasury issues, whether measured in par or in ten-year
 equivalents.
 
@@ -23,15 +23,15 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from src.common.config import SAMPLE_START
+from src.common.config import SAMPLE_START, WINDOW_END
 from src.data.load_public import load_auctions
 
-WINDOW_END = "2026-09-30"
 COUPON_FREQ = 2          # semiannual Treasury coupons
 REF_10Y_COUPON = 4.2     # reference 10-year note, for the ten-year-equivalent base
 REF_10Y_YEARS = 10.0
 REF_10Y_YIELD = 4.4
 COUPON_TYPES = ("Note", "Bond")
+LIQUIDITY_SUPPORT = ("Liquidity Support",)
 
 
 def modified_duration(coupon_pct, years, yield_pct, freq: int = COUPON_FREQ):
@@ -83,17 +83,23 @@ def analytical_crsp_corr() -> float:
     return float(d["crsp"].corr(d["an"]))
 
 
-def _liquidity_support_removed(panel: dict[str, pd.DataFrame], d10: float):
+def _removed(panel: dict[str, pd.DataFrame], d10: float, op_types=None):
+    """Par and ten-year equivalents repurchased over the window.
+
+    `op_types` selects the arm: the liquidity support arm alone, or every buyback
+    operation when None. Reporting both is what lets the manuscript state that the
+    scale conclusion does not turn on which arm is counted."""
     from src.engine.absorption import normalize_cusip
     ops, opsec, secday = panel["ops"], panel["opsec"], panel["secday"]
-    ls_dates = set(ops[(ops["operation_type"] == "Liquidity Support")
-                       & (pd.to_datetime(ops["operation_date"]) >= SAMPLE_START)]["operation_date"])
+    in_window = pd.to_datetime(ops["operation_date"]) >= SAMPLE_START
+    sel = in_window if op_types is None else in_window & ops["operation_type"].isin(op_types)
+    ls_dates = set(ops[sel]["operation_date"])
     b = opsec[(opsec["operation_date"].isin(ls_dates)) & (opsec["bought"])].copy()
     b["ytm"] = (pd.to_datetime(b["maturity_date"])
                 - pd.to_datetime(b["operation_date"])).dt.days / 365.25
     b["cpn"] = pd.to_numeric(b["coupon_rate"], errors="coerce")
     b["par"] = pd.to_numeric(b["par_accepted"], errors="coerce")
-    # Duration source: CRSP tdduratn (vendor modified duration, the CA-2.6a source;
+    # Duration source: the vendor modified duration from CRSP;
     # per-security it matches the analytical formula, corr ~0.996). Analytical
     # modified duration at the coupon is the fallback for securities absent from
     # CRSP (e.g. 2026, past the CRSP window).
@@ -108,6 +114,33 @@ def _liquidity_support_removed(panel: dict[str, pd.DataFrame], d10: float):
     par = b["par"].sum()
     ten_y = (b["par"] * b["dur"]).sum() / d10
     return par, ten_y
+
+
+LONG_END_BUCKETS = ("10Y to 20Y", "20Y to 30Y")
+
+
+def long_end_cap_change() -> dict[str, float]:
+    """The per-operation redemption cap at the long end, before and after it was
+    raised, read from the operation announcements rather than asserted in prose.
+
+    The cap is the debt manager's own state-contingent lever, so the manuscript
+    reports its size from the data that records it. Read from the operations
+    release directly: the analysis panel does not carry the announcement columns."""
+    from src.data.load_public import load_buyback_operations
+    ops = load_buyback_operations().copy()
+    ops["d"] = pd.to_datetime(ops["operation_date"])
+    ls = ops[(ops["operation_type"] == "Liquidity Support")
+             & (ops["d"] >= SAMPLE_START)
+             & (ops["maturity_bucket"].isin(LONG_END_BUCKETS))].copy()
+    ls["cap"] = pd.to_numeric(ls["max_par_amt_redeemed"], errors="coerce") / 1e9
+    ls = ls.dropna(subset=["cap"])
+    first, last = ls["cap"].iloc[0], ls["cap"].iloc[-1]
+    raised = ls[ls["cap"] > first]
+    return {
+        "long_end_cap_before_bn": float(first),
+        "long_end_cap_after_bn": float(last),
+        "long_end_cap_raised_on": raised["d"].min().date().isoformat() if len(raised) else "",
+    }
 
 
 def _coupon_issuance(d10: float):
@@ -137,19 +170,24 @@ def _coupon_issuance(d10: float):
 
 def compute(panel: dict[str, pd.DataFrame]) -> dict[str, float]:
     d10 = reference_10y_duration()
-    ls_par, ls_10y = _liquidity_support_removed(panel, d10)
+    ls_par, ls_10y = _removed(panel, d10, LIQUIDITY_SUPPORT)
+    all_par, all_10y = _removed(panel, d10, None)
     gross_par, gross_10y, mat_par = _coupon_issuance(d10)
     net_par = gross_par - mat_par
     return {
         "ref_10y_duration_years": d10,
         "ls_removed_par_bn": ls_par / 1e9,
         "ls_removed_10y_equiv_bn": ls_10y / 1e9,
+        "all_removed_par_bn": all_par / 1e9,
+        "all_removed_10y_equiv_bn": all_10y / 1e9,
         "gross_issuance_par_bn": gross_par / 1e9,
         "gross_issuance_10y_equiv_bn": gross_10y / 1e9,
         "coupon_maturities_par_bn": mat_par / 1e9,
         "net_issuance_par_bn": net_par / 1e9,
         "ratio_par_ls_over_net_pct": 100.0 * ls_par / net_par,
         "ratio_duration_ls_over_gross_pct": 100.0 * ls_10y / gross_10y,
+        "ratio_par_all_over_net_pct": 100.0 * all_par / net_par,
+        "ratio_duration_all_over_gross_pct": 100.0 * all_10y / gross_10y,
     }
 
 

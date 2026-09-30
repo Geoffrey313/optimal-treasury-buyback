@@ -1,16 +1,16 @@
-"""CA-2.2b — validity gate for the maturity-month instrument z_i.
+"""Validity gate for the maturity-month instrument z_i.
 
 The instrument is usable only if tax-month maturity does not predict
 systematically different security characteristics. This module implements the
 two checks that decide the gate here: the covariate balance between z_i = 1 and
 z_i = 0, and the first-stage strength of z_i on the accepted amount. If either
-fails, US-02 CA-2.2b requires abandoning z_i, so the 2SLS(z_i) estimate of the
+fails, z_i is abandoned, so the 2SLS(z_i) estimate of the
 absorption cost is not reported.
 
-TODO(CA-2.2b, later): add the exclusion pre-trend test (that z_i does not predict
-pre-operation price or liquidity dynamics after controls). It is not implemented
-yet because the covariate balance already fails decisively, which by itself
-fails the gate; the pre-trend test would only matter if the balance passed.
+The gate is decided by covariate balance alone whenever balance rejects, since a
+failed balance is sufficient on its own. An exclusion pre-trend test, that z_i
+does not predict pre-operation price or liquidity dynamics after controls, would
+bear on the verdict only where balance passes.
 
 This module only diagnoses; it does not estimate lambda_B.
 """
@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-import numpy as np
 import pandas as pd
 from scipy import stats
 
@@ -91,7 +90,7 @@ def first_stage_f(opsec_core: pd.DataFrame) -> float:
 
 
 def evaluate_instrument(opsec_core: pd.DataFrame) -> InstrumentVerdict:
-    """Run CA-2.2b and return a pass/fail verdict."""
+    """Run the gate and return a pass/fail verdict."""
     balance = covariate_balance(opsec_core)
     f = first_stage_f(opsec_core)
     failed_cov = [b.covariate for b in balance if b.pvalue < BALANCE_ALPHA]
@@ -102,9 +101,9 @@ def evaluate_instrument(opsec_core: pd.DataFrame) -> InstrumentVerdict:
             bits.append("covariate imbalance on " + ", ".join(failed_cov))
         if weak:
             bits.append(f"weak first stage (F={f:.2f} < {WEAK_IV_F_THRESHOLD:.0f})")
-        return InstrumentVerdict(False, "CA-2.2b FAIL: " + "; ".join(bits),
+        return InstrumentVerdict(False, "instrument gate FAIL: " + "; ".join(bits),
                                  balance=balance, first_stage_f=f)
-    return InstrumentVerdict(True, "CA-2.2b PASS", balance=balance, first_stage_f=f)
+    return InstrumentVerdict(True, "instrument gate PASS", balance=balance, first_stage_f=f)
 
 
 if __name__ == "__main__":

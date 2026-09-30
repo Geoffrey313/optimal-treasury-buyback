@@ -1,5 +1,6 @@
 """Data layer: reads the transformed input data shipped in data/ (never downloads).
 
-The raw-data acquisition scripts live outside the published repo (data/acquire/,
-gitignored). This layer only loads the transformed panels used by the engine.
+Two loader modules read the parquet files, one for the public Treasury layers and
+one for the licensed CRSP layer, and :mod:`src.data.panel` assembles them into
+the four analysis panels of :mod:`src.common.schema`.
 """
