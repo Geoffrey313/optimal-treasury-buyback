@@ -1,0 +1,85 @@
+# ---- Excluded from publication (present in workspace, never pushed) ----
+# Manuscripts (EN, FR, all journal versions) — reproducible, never stored
+manuscript/
+
+# Generated results (figures, tables, numeric outputs) — reproducible by code
+results/
+
+# Internal working directory: audit outputs, session notes, drafts
+docs/internal/
+
+# Framework / planning docs (working material, not reproduction)
+docs/research/
+
+# Data acquisition / download scripts (kept out of the published repo)
+src/data/acquire/
+scripts/
+
+# Unit tests
+tests/
+
+# Raw or licensed data (CRSP/WRDS derived data are NOT redistributable)
+data/raw/
+data/licensed/
+*.raw.parquet
+# CRSP Treasury layer is licensed via WRDS — never publish it (keep the README)
+data/crsp/*.parquet
+data/crsp/*.csv
+
+# Secrets
+.env
+.env.local
+*.pem
+*.key
+credentials*
+
+# Caches / build artifacts
+__pycache__/
+.pytest_cache/
+.ipynb_checkpoints/
+*.pyc
+*.aux
+*.log
+*.fls
+*.fdb_latexmk
+*.bbl
+*.blg
+*.out
+*.toc
+*.synctex.gz
+# manuscript PDFs
+manuscript/**/*.pdf
+
+# ---- Included in publication ----
+# src/, reproduce.py, data/ (transformed, redistributable only),
+# data/README.md, README.md, .env.example, requirements.txt
+
+# ---- Hardening: not present today, but must never be published ----
+# The whole docs tree is working material; the repo publishes only src/, reproduce.py,
+# protocol/, data/, README.md, .env.example and requirements.txt.
+docs/
+
+# Any other environment file, whatever the suffix
+.env.*
+!.env.example
+
+# Virtual environments and Python build artefacts
+venv/
+.venv/
+env/
+build/
+dist/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+
+# Editor, OS and merge artefacts
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.orig
+*.rej
+
+# Local agent/session state
+.claude/

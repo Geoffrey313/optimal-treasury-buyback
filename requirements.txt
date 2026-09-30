@@ -1,0 +1,12 @@
+# Pinned dependencies for end-to-end reproduction (reproduce.py).
+# Pinned to the environment the results were produced in; change only with a
+# re-run and a digest check.
+numpy==2.4.3
+scipy==1.17.1
+pandas==2.2.3
+statsmodels==0.14.6
+linearmodels==7.0
+differences==0.3.0
+pyarrow==17.0.0
+wrds==3.5.0
+python-dotenv==1.0.1

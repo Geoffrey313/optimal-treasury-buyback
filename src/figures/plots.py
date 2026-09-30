@@ -1,0 +1,325 @@
+"""Manuscript figures, generated as native LaTeX (pgfplots) in both languages.
+
+Every figure is emitted as a self-contained ``tikzpicture`` written from the
+shipped data and the analysis modules, so no plotted number is entered by hand
+and the figures are typeset by LaTeX in the document font. The project figure
+format is therefore native LaTeX, not a raster export, per the manuscript form
+rules (the format is a declared project choice).
+
+Colours are the manuscript's homogeneous academic palette, defined once in the
+preamble and referenced here by name, one meaning per colour:
+
+* ``cLevel``  the observed or fitted yield level;
+* ``cTP``     the term premium;
+* ``cExp``    the expected-rate (risk-neutral) component;
+* ``cProg``   a buyback-program quantity;
+* ``cRef``    issuance, a benchmark, or a reference quantity.
+
+No figure carries an internal title (the title is the LaTeX caption and the full
+description the note under the figure); axis labels denoting quantities are set
+in the manuscript language with units spelled out. The figures are:
+
+1. ``yield_path``       daily ten-year par yield over the program window;
+2. ``decomposition``    the ACM ten-year level split into term premium and expected rate;
+3. ``scale``            the program against coupon issuance, par and ten-year equivalents;
+4. ``reaction``         the Treasury reaction-function coefficients, two specifications;
+5. ``parallel_trends``  the staggered event-study path with its rejected pre-trend;
+6. ``inversion``        term-premium compression against removal size, with the QE scale.
+"""
+from __future__ import annotations
+
+import pandas as pd
+
+from src.common.config import SAMPLE_START
+from src.common.paths import DATA_CURVES, RESULTS_DIR, figures_dir
+
+WINDOW_END = "2026-09-30"
+
+# Language-specific label text (no English leaks into the FR figures).
+L = {
+    "en": {
+        "date": "Date", "percent": "Percent", "bp": "basis points",
+        "level": "Ten-year yield", "tp": "Term premium",
+        "exp": "Expected-rate component",
+        "program_start": "Program restart", "upsizing": "2026 upsizing",
+        "removed": "Removed by buybacks", "issued": "Coupon issuance",
+        "par_net": "Par, vs net", "teny_gross": "Ten-year equiv., vs gross",
+        "usd_tn": "trillions of dollars",
+        "coef": "Coefficient", "spec1": "Operation FE",
+        "spec2": "Adds maturity-band FE", "absorbed": "absorbed",
+        "maturity": "Years to maturity", "coupon": "Coupon rate",
+        "ofr": "On/off-the-run spread", "bidask": "Bid-ask spread",
+        "eventtime": "Event time",
+        "att": "Effect on the spread",
+        "removal": "Ten-year equivalents removed",
+        "compression": "Term-premium compression",
+        "elast_lo": "Low elasticity", "elast_hi": "High elasticity",
+        "prog_point": "Program", "tp_rise": "Observed rise",
+    },
+    "fr": {
+        "date": "Date", "percent": "Pourcentage", "bp": "points de base",
+        "level": "Rendement \\`a dix ans", "tp": "Prime de terme",
+        "exp": "Composante de taux anticip\\'es",
+        "program_start": "Relance", "upsizing": "Rel\\`evement 2026",
+        "removed": "Retir\\'e par les rachats", "issued": "\\'Emission coupon",
+        "par_net": "Par, face au net", "teny_gross": "\\'Equiv.-dix-ans, face au brut",
+        "usd_tn": "milliers de milliards de dollars",
+        "coef": "Coefficient", "spec1": "EF op\\'eration",
+        "spec2": "Ajoute EF de bande de maturit\\'e", "absorbed": "absorb\\'ee",
+        "maturity": "Ann\\'ees jusqu'\\`a \\'ech\\'eance", "coupon": "Taux de coupon",
+        "ofr": "\\'Ecart march\\'e r\\'ecent/hors", "bidask": "\\'Ecart bid-ask",
+        "eventtime": "Temps d'\\'ev\\'enement",
+        "att": "Effet sur l'\\'ecart",
+        "removal": "\\'Equivalents-dix-ans retir\\'es",
+        "compression": "Compression de prime de terme",
+        "elast_lo": "\\'Elasticit\\'e basse", "elast_hi": "\\'Elasticit\\'e haute",
+        "prog_point": "Programme", "tp_rise": "Hausse observ\\'ee",
+    },
+}
+
+
+def _dec_year(ts: pd.Timestamp) -> float:
+    ts = pd.Timestamp(ts)
+    return ts.year + (ts.dayofyear - 1) / 365.25
+
+
+def _co(xs, ys, prec: int = 4) -> str:
+    return " ".join(f"({x:.{prec}f},{y:.{prec}f})" for x, y in zip(xs, ys))
+
+
+def _num(value: float, language: str, prec: int = 1) -> str:
+    """Format a decimal for a rendered annotation in the figure's language.
+
+    French uses a decimal comma; the pgfplots axis-tick style already localizes
+    tick labels, but text nodes carry their own literal, so they are formatted
+    here. Coordinates are not routed through this (pgfplots requires a point).
+    """
+    s = f"{value:.{prec}f}"
+    return s.replace(".", ",") if language == "fr" else s
+
+
+def _write(language: str, name: str, axis_opts: str, body: str) -> None:
+    d = figures_dir(language)
+    d.mkdir(parents=True, exist_ok=True)
+    tex = ("% Generated by reproduce.py -- do not edit; data come from the code.\n"
+           "\\begin{tikzpicture}\n\\begin{axis}[academic,\n"
+           f"{axis_opts}]\n{body}\n\\end{{axis}}\n\\end{{tikzpicture}}\n")
+    (d / f"{name}.tex").write_text(tex)
+
+
+# --------------------------------------------------------------------------
+# 1. Daily ten-year par yield over the program window
+# --------------------------------------------------------------------------
+def _first_upsizing_date(panel) -> pd.Timestamp:
+    ops = panel["ops"]
+    sept = ops[(ops["operation_type"] == "Liquidity Support")
+               & (pd.to_datetime(ops["operation_date"]) >= "2026-09-01")]
+    return pd.to_datetime(sept["operation_date"]).min()
+
+
+def fig_yield_path(panel, language: str) -> None:
+    t = L[language]
+    df = pd.read_parquet(DATA_CURVES / "par_yields.parquet")
+    df["Date"] = pd.to_datetime(df["Date"])
+    df = df[df["Date"] >= pd.Timestamp(SAMPLE_START)].sort_values("Date")
+    x = [_dec_year(d) for d in df["Date"]]
+    y = df["10 Yr"].astype(float).tolist()
+    ymin, ymax = min(y) - 0.15, max(y) + 0.15
+    x0 = _dec_year(SAMPLE_START)
+    xup = _dec_year(_first_upsizing_date(panel))
+    opts = (f"  xlabel={{{t['date']}}}, ylabel={{{t['percent']}}},\n"
+            f"  xtick={{2024,2025,2026,2027}}, xticklabels={{2024,2025,2026,2027}},\n"
+            f"  ymin={ymin:.2f}, ymax={ymax:.2f}, enlarge x limits=0.02")
+    body = (f"\\addplot[cLevel, thick] coordinates {{{_co(x, y)}}};\n"
+            f"\\draw[cRef, dashed] (axis cs:{x0:.4f},{ymin:.2f}) -- (axis cs:{x0:.4f},{ymax:.2f});\n"
+            f"\\draw[cProg, dashed] (axis cs:{xup:.4f},{ymin:.2f}) -- (axis cs:{xup:.4f},{ymax:.2f});\n"
+            f"\\node[anchor=south west, font=\\footnotesize, text=cRef] at (axis cs:{x0:.4f},{ymin:.2f}) {{{t['program_start']}}};\n"
+            f"\\node[anchor=north east, font=\\footnotesize, text=cProg] at (axis cs:{xup:.4f},{ymax:.2f}) {{{t['upsizing']}}};")
+    _write(language, "yield_path", opts, body)
+
+
+# --------------------------------------------------------------------------
+# 2. ACM decomposition of the ten-year level
+# --------------------------------------------------------------------------
+def fig_decomposition(panel, language: str) -> None:
+    t = L[language]
+    df = pd.read_parquet(DATA_CURVES / "acm_term_premium.parquet")
+    df["DATE"] = pd.to_datetime(df["DATE"])
+    df = df[(df["DATE"] >= pd.Timestamp(SAMPLE_START))
+            & (df["DATE"] <= pd.Timestamp(WINDOW_END))].sort_values("DATE")
+    x = [_dec_year(d) for d in df["DATE"]]
+    opts = (f"  xlabel={{{t['date']}}}, ylabel={{{t['percent']}}},\n"
+            f"  xtick={{2024,2025,2026,2027}}, xticklabels={{2024,2025,2026,2027}},\n"
+            f"  legend style={{at={{(0.98,0.55)}}, anchor=east}}, enlarge x limits=0.02")
+    body = (f"\\addplot[black!45, thin, forget plot] coordinates {{({min(x):.4f},0) ({max(x):.4f},0)}};\n"
+            f"\\addplot[cLevel, thick] coordinates {{{_co(x, df['ACMY10'])}}};\n"
+            f"\\addplot[cTP, thick] coordinates {{{_co(x, df['ACMTP10'])}}};\n"
+            f"\\addplot[cExp, thick] coordinates {{{_co(x, df['ACMRNY10'])}}};\n"
+            f"\\legend{{{t['level']},{t['tp']},{t['exp']}}}")
+    _write(language, "decomposition", opts, body)
+
+
+# --------------------------------------------------------------------------
+# 3. Program against coupon issuance (the program is small)
+# --------------------------------------------------------------------------
+def fig_scale(panel, language: str) -> None:
+    from src.analysis.duration_accounting import compute as da_compute
+    t = L[language]
+    da = da_compute(panel)
+    prog_teny, gross_teny = da["ls_removed_10y_equiv_bn"] / 1e3, da["gross_issuance_10y_equiv_bn"] / 1e3
+    prog_par, net_par = da["ls_removed_par_bn"] / 1e3, da["net_issuance_par_bn"] / 1e3
+    pct_teny, pct_par = da["ratio_duration_ls_over_gross_pct"], da["ratio_par_ls_over_net_pct"]
+    xmax = max(gross_teny, net_par) * 1.15
+    # Numeric y positions bind tick labels deterministically: 0 = par row (bottom),
+    # 1 = ten-year-equivalent row (top).
+    opts = (f"  xbar, bar width=8pt, y=1.1cm, ymin=-0.6, ymax=1.6,\n"
+            f"  xmin=0, xmax={xmax:.2f}, xlabel={{{t['usd_tn']}}},\n"
+            f"  ytick={{0,1}}, yticklabels={{{{{t['par_net']}}},{{{t['teny_gross']}}}}},\n"
+            f"  legend style={{at={{(0.98,0.35)}}, anchor=east}}")
+    body = (f"\\addplot[fill=cRef, draw=none] coordinates {{({net_par:.3f},0) ({gross_teny:.3f},1)}};\n"
+            f"\\addplot[fill=cProg, draw=none] coordinates {{({prog_par:.3f},0) ({prog_teny:.3f},1)}};\n"
+            f"\\legend{{{t['issued']},{t['removed']}}}\n"
+            f"\\node[anchor=west, font=\\footnotesize, text=cProg] at (axis cs:{prog_par:.3f},0) {{{_num(pct_par, language)}\\%}};\n"
+            f"\\node[anchor=west, font=\\footnotesize, text=cProg] at (axis cs:{prog_teny:.3f},1) {{{_num(pct_teny, language)}\\%}};")
+    _write(language, "scale", opts, body)
+
+
+# --------------------------------------------------------------------------
+# 4. The Treasury reaction function (coefficient plot, two specifications)
+# --------------------------------------------------------------------------
+def fig_reaction(panel, language: str) -> None:
+    from src.analysis.selection import estimate_reaction_function, robustness_within_maturity
+    t = L[language]
+    base = estimate_reaction_function(panel)
+    within = robustness_within_maturity(panel)
+    order = ["ytm", "coupon", "ofr_spread_z", "bid_ask_z"]     # top -> bottom
+    ypos = {k: len(order) - 1 - i for i, k in enumerate(order)}  # maturity highest
+    labels = {"ytm": t["maturity"], "coupon": t["coupon"],
+              "ofr_spread_z": t["ofr"], "bid_ask_z": t["bidask"]}
+    base_pts, within_pts, within_absorbed = [], [], []
+    for k in order:
+        e = base[k]
+        base_pts.append(f"({e.value:.4f},{ypos[k] + 0.16:.2f}) +- ({1.96 * e.se:.4f},0)")
+        w = within.get(k)
+        if w is not None:
+            within_pts.append(f"({w.value:.4f},{ypos[k] - 0.16:.2f}) +- ({1.96 * w.se:.4f},0)")
+        else:
+            within_absorbed.append((e.value, ypos[k] - 0.16))
+    # Ascending ytick with labels in the same ascending order binds each label to
+    # its position deterministically (y=0 bottom .. y=3 top).
+    asc = sorted(order, key=lambda k: ypos[k])
+    ylabels = ",".join("{" + labels[k] + "}" for k in asc)
+    yticks = ",".join(str(ypos[k]) for k in asc)
+    opts = (f"  xlabel={{{t['coef']}}}, ymin=-0.6, ymax={len(order) - 0.4:.1f},\n"
+            f"  ytick={{{yticks}}}, yticklabels={{{ylabels}}},\n"
+            f"  legend style={{at={{(0.02,0.5)}}, anchor=west}}")
+    absorbed_nodes = "".join(
+        f"\\node[font=\\footnotesize\\itshape, text=cProg, anchor=center] at (axis cs:{v:.4f},{y:.2f}) {{{t['absorbed']}}};\n"
+        for v, y in within_absorbed)
+    body = (f"\\draw[black!55] (axis cs:0,-0.6) -- (axis cs:0,{len(order) - 0.4:.1f});\n"
+            f"\\addplot[cLevel, only marks, mark=*, mark size=1.7pt, error bars/.cd, x dir=both, x explicit] "
+            f"coordinates {{{' '.join(base_pts)}}};\n"
+            f"\\addplot[cProg, only marks, mark=square*, mark size=1.7pt, error bars/.cd, x dir=both, x explicit] "
+            f"coordinates {{{' '.join(within_pts)}}};\n"
+            f"\\legend{{{t['spec1']},{t['spec2']}}}\n"
+            f"{absorbed_nodes}")
+    _write(language, "reaction", opts, body)
+
+
+# --------------------------------------------------------------------------
+# 5. Event-study path with the rejected pre-trend
+# --------------------------------------------------------------------------
+def fig_parallel_trends(panel, language: str) -> None:
+    t = L[language]
+    es = pd.read_csv(RESULTS_DIR / "event_study.csv").sort_values("k").dropna(subset=["theta"])
+    s = 1e4  # yield fraction -> basis points
+    k = es["k"].astype(float).tolist()
+    mid = (es["theta"] * s).tolist()
+    lo = (es["ci_low"] * s).tolist()
+    hi = (es["ci_high"] * s).tolist()
+    ymin, ymax = min(lo) * 1.15, max(hi) * 1.15
+    kmin, kmax = min(k), max(k)
+    opts = (f"  xlabel={{{t['eventtime']}}}, ylabel={{{t['att']}}} ({t['bp']}),\n"
+            f"  ymin={ymin:.4f}, ymax={ymax:.4f}, enlarge x limits=0.03")
+    body = (f"\\fill[cTP, opacity=0.06] (axis cs:{kmin:.1f},{ymin:.4f}) rectangle (axis cs:-1.5,{ymax:.4f});\n"
+            f"\\addplot[black!45, thin, forget plot] coordinates {{({kmin:.1f},0) ({kmax:.1f},0)}};\n"
+            f"\\draw[cRef, dotted] (axis cs:-1,{ymin:.4f}) -- (axis cs:-1,{ymax:.4f});\n"
+            f"\\addplot[name path=lo, draw=none, forget plot] coordinates {{{_co(k, lo)}}};\n"
+            f"\\addplot[name path=hi, draw=none, forget plot] coordinates {{{_co(k, hi)}}};\n"
+            f"\\addplot[cLevel, opacity=0.15, forget plot] fill between[of=lo and hi];\n"
+            f"\\addplot[cLevel, thick, mark=*, mark size=1pt] coordinates {{{_co(k, mid)}}};")
+    _write(language, "parallel_trends", opts, body)
+
+
+def fig_matched_pretrend(panel, language: str) -> None:
+    """The matched event-study path (US-04): eligible-not-bought controls in the same
+    maturity-by-coupon cell. Shown to make the point that the pre-trend is still
+    rejected, so the direct effect is a bound, not an identified effect."""
+    t = L[language]
+    es = pd.read_csv(RESULTS_DIR / "matched_event_study.csv").sort_values("k").dropna(subset=["theta"])
+    s = 1e4  # yield fraction -> basis points
+    k = es["k"].astype(float).tolist()
+    mid = (es["theta"] * s).tolist()
+    lo = (es["ci_low"] * s).tolist()
+    hi = (es["ci_high"] * s).tolist()
+    ymin, ymax = min(lo) * 1.15, max(hi) * 1.15
+    kmin, kmax = min(k), max(k)
+    opts = (f"  xlabel={{{t['eventtime']}}}, ylabel={{{t['att']}}} ({t['bp']}),\n"
+            f"  ymin={ymin:.4f}, ymax={ymax:.4f}, enlarge x limits=0.03")
+    body = (f"\\fill[cTP, opacity=0.06] (axis cs:{kmin:.1f},{ymin:.4f}) rectangle (axis cs:-1.5,{ymax:.4f});\n"
+            f"\\addplot[black!45, thin, forget plot] coordinates {{({kmin:.1f},0) ({kmax:.1f},0)}};\n"
+            f"\\draw[cRef, dotted] (axis cs:-1,{ymin:.4f}) -- (axis cs:-1,{ymax:.4f});\n"
+            f"\\addplot[name path=lo, draw=none, forget plot] coordinates {{{_co(k, lo)}}};\n"
+            f"\\addplot[name path=hi, draw=none, forget plot] coordinates {{{_co(k, hi)}}};\n"
+            f"\\addplot[cProg, opacity=0.15, forget plot] fill between[of=lo and hi];\n"
+            f"\\addplot[cProg, thick, mark=*, mark size=1pt] coordinates {{{_co(k, mid)}}};")
+    _write(language, "matched_pretrend", opts, body)
+
+
+# --------------------------------------------------------------------------
+# 6. The inversion: compression against removal size, with the QE scale
+# --------------------------------------------------------------------------
+def fig_inversion(panel, language: str) -> None:
+    from src.analysis.term_premium import compute as tp_compute, ELASTICITY_BP_PER_100BN
+    t = L[language]
+    r = tp_compute(panel)
+    removed = r["buyback_10y_equiv_removed_bn"] / 1e3
+    tp_rise = r["d_term_premium_bp"]
+    needed_hi = r["removal_to_offset_tp_bn_high"] / 1e3
+    lo_e, hi_e = ELASTICITY_BP_PER_100BN
+    xmax = needed_hi * 1.1
+    ymax = xmax * 1e3 / 100 * hi_e * 1.05
+    opts = (f"  xlabel={{{t['removal']} ({t['usd_tn']})}}, ylabel={{{t['compression']} ({t['bp']})}},\n"
+            f"  xmin=0, xmax={xmax:.2f}, ymin=0, ymax={ymax:.1f},\n"
+            f"  legend style={{at={{(0.98,0.05)}}, anchor=south east}}")
+    body = (f"\\addplot[cRef, thick] coordinates {{(0,0) ({xmax:.2f},{xmax * 1e3 / 100 * lo_e:.2f})}};\n"
+            f"\\addplot[cLevel, thick] coordinates {{(0,0) ({xmax:.2f},{xmax * 1e3 / 100 * hi_e:.2f})}};\n"
+            f"\\addplot[cTP, dashed, forget plot] coordinates {{(0,{tp_rise:.2f}) ({xmax:.2f},{tp_rise:.2f})}};\n"
+            f"\\draw[cProg, thick] (axis cs:{removed:.3f},0) -- (axis cs:{removed:.3f},{ymax:.1f});\n"
+            f"\\legend{{{t['elast_lo']},{t['elast_hi']}}}\n"
+            f"\\node[anchor=south west, font=\\footnotesize, text=cTP] at (axis cs:0,{tp_rise:.2f}) {{{t['tp_rise']}}};\n"
+            f"\\node[anchor=south west, font=\\footnotesize, text=cProg, rotate=90] at (axis cs:{removed:.3f},0) {{{t['prog_point']}}};")
+    _write(language, "inversion", opts, body)
+
+
+# --------------------------------------------------------------------------
+# Entry point
+# --------------------------------------------------------------------------
+_FIGURES = (fig_yield_path, fig_decomposition, fig_scale,
+            fig_reaction, fig_inversion)
+
+
+def render_all(panel, language: str) -> list[str]:
+    """Render every manuscript figure (as pgfplots .tex) for one language."""
+    for f in _FIGURES:
+        f(panel, language)
+    return [f.__name__.replace("fig_", "") for f in _FIGURES]
+
+
+if __name__ == "__main__":
+    import warnings
+    warnings.filterwarnings("ignore")
+    from src.data.panel import build_panels
+    p = build_panels()
+    for lang in ("en", "fr"):
+        print(lang, "->", render_all(p, lang))
